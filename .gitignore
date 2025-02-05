@@ -1,0 +1,8 @@
+.env
+__pycache__
+
+*.ipynb
+
+*.csv
+
+.with_selenium.py
