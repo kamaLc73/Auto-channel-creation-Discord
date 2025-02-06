@@ -1,168 +1,74 @@
 import discord
 import os
 import random
-from discord.ext import commands
-from dotenv import load_dotenv
+import logging
 import requests
 import asyncio
+from discord.ext import commands
+from dotenv import load_dotenv
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-api_key = os.getenv('API_KEY_OPEN_WEATHER')  
-client = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+OPENWEATHER_API_KEY = os.getenv('API_KEY_OPEN_WEATHER')
 
-@client.event
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents, case_insensitive=True)
+
+# ========================
+# EVENTS
+# ========================
+@bot.event
 async def on_ready():
-    print(f'✅ We have logged in as {client.user}')
+    print(f'✅ We have logged in as {bot.user}')
     print("✅ Bot is starting ...")
     print("-----------------------------------------")
     
-    await client.change_presence(activity=discord.Game(name="Java ♨"))
+    await bot.change_presence(activity=discord.Game(name="Java ♨"))
     print("✅ Bot status set to: Java ♨")
 
-    for guild in client.guilds:
+    for guild in bot.guilds:
         print(f'✅ Connected to: {guild.name} (ID: {guild.id})')
 
-
-@client.event
+@bot.event
 async def on_message(message):
-    if message.author == client.user:
-        return 
-
-    content = message.content.lower()  
-    hello_keywords = ["hello", "hi", "salam", "wa fen"]
-    arawkan_keywords = ["arawkan"]
-
-    if any(word in content for word in hello_keywords):
-        response = "Ach endek alkhawa"
-        await message.channel.send(response)
-        print(f'📩 Sent message: "{response}" in {message.guild.name}#{message.channel.name}')
-
-    elif any(word in content for word in arawkan_keywords):
-        quotes = [
-            "Théoriquement", "plus ou moins", "Next", "Tout ce qu'on a vu", 
-            "Pas de question ?", "7yed telephone", "Parfait !", "Madmoiselle", 
-            "Pas de goblet sur table", "C'est la pire des solutions !!"
-        ]
-        random_quote = random.choice(quotes)
-        await message.channel.send(random_quote)
-        print(f'📩 Sent quote: "{random_quote}" in {message.guild.name}#{message.channel.name}')
-
-    await client.process_commands(message) 
-
-@client.command()
-async def create_channel_in_category(ctx, category_name, channel_name):
-    guild = ctx.guild  
-    category = discord.utils.get(guild.categories, name=category_name)
-
-    if not category:
-        category = await guild.create_category(category_name)
-        await ctx.send(f"✅ Catégorie `{category_name}` créée avec succès !")
-        print(f'✅ Created category: {category_name} in {guild.name}')
-
-    existing_channel = discord.utils.get(guild.text_channels, name=channel_name, category=category)
-    if not existing_channel:
-        await guild.create_text_channel(channel_name, category=category)
-        await ctx.send(f"✅ Canal `{channel_name}` ajouté à la catégorie `{category_name}`")
-        print(f'✅ Created channel: {channel_name} in category: {category_name} ({guild.name})')
-    else:
-        await ctx.send(f"⚠️ Le canal `{channel_name}` existe déjà dans `{category_name}`.")
-        print(f'⚠️ Channel {channel_name} already exists in {category_name} ({guild.name})')
-
-@client.command()
-async def create_categories_with_channels(ctx, *categories):
-    guild = ctx.guild  
-    text_channels = ["cours", "tds", "tps", "exams", "bonus"]
-
-    for category_name in categories:
-        category = discord.utils.get(guild.categories, name=category_name)
-
-        if not category:
-            category = await guild.create_category(category_name)
-            await ctx.send(f"✅ Catégorie `{category_name}` créée avec succès !")
-            print(f'✅ Created category: {category_name} in {guild.name}')
-        
-        for channel_name in text_channels:
-            existing_channel = discord.utils.get(guild.text_channels, name=channel_name, category=category)
-            if not existing_channel:
-                await guild.create_text_channel(channel_name, category=category)
-                await ctx.send(f"✅ Canal `{channel_name}` ajouté à la catégorie `{category_name}`")
-                print(f'✅ Created channel: {channel_name} in category: {category_name} ({guild.name})')
-            else:
-                print(f'⚠️ Channel {channel_name} already exists in {category_name} ({guild.name})')
-
-    await ctx.send("✅ **Toutes les catégories et leurs canaux ont été créés !** 🎉")
-    print(f'✅ All requested categories and channels have been created in {guild.name}.')
-
-@client.command()
-async def delete_messages(ctx, amount: str = "5"):
-    """Deletes a specified number of messages or all messages if '-' is given."""
-    if amount == "-":
-        deleted_count = 0
-        async for message in ctx.channel.history(limit=100):  
-            await message.delete()
-            deleted_count += 1
-            await asyncio.sleep(1)  
-
-        await ctx.send(f"✅ Deleted **{deleted_count}** messages.", delete_after=3)
-        print(f'🗑 Deleted all messages in {ctx.guild.name}#{ctx.channel.name}')
-    else:
-        try:
-            amount = int(amount)
-            if amount < 1:
-                await ctx.send("⚠️ Please specify a valid number of messages to delete.", delete_after=3)
-                return
-            
-            deleted = await ctx.channel.purge(limit=amount + 1)
-            await ctx.send(f"✅ Deleted **{len(deleted) - 1}** messages.", delete_after=3)
-            print(f'🗑 Deleted {len(deleted) - 1} messages in {ctx.guild.name}#{ctx.channel.name}')
-        
-        except ValueError:
-            await ctx.send("⚠️ Invalid input. Use a number or '-' to delete all messages.", delete_after=3)
-
-
-@client.command()
-async def delete_bot_messages(ctx, limit: int = 5):
-    """Deletes the bot's last messages in the current channel (default: 5 messages)."""
-    deleted = 0
-    async for message in ctx.channel.history(limit=100):
-        if message.author == client.user and deleted < limit:
-            await message.delete()
-            deleted += 1
-
-    await ctx.send(f"✅ Deleted {deleted} bot messages.", delete_after=3)
-    print(f'🗑 Deleted {deleted} bot messages in {ctx.guild.name}#{ctx.channel.name}')
-
-@client.command()
-async def weather(ctx, city: str):
-    if not api_key:
-        await ctx.send("⚠️ API key for OpenWeather not found in the environment variables.")
-        print("⚠️ OpenWeather API key not found.")
+    if message.author == bot.user:  
         return
 
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-    response = requests.get(url)
-    data = response.json()
+    content = message.content.lower()
+    responses = {
+        ("hello", "hi", "salam", "wa fen"): "Ach endek alkhawa",
+        ("arawkan",): [
+            "Théoriquement", "plus ou moins", "Next", 
+            "Tout ce qu'on a vu", "Pas de question ?", 
+            "7yed telephone", "Parfait !", "Madmoiselle",
+            "Pas de goblet sur table", "C'est la pire des solutions !!"
+        ]
+    }
 
-    if data['cod'] != '404':
-        main_data = data['main']
-        weather_data = data['weather'][0]
-        temperature = main_data['temp']
-        description = weather_data['description']
-        await ctx.send(f"Weather in {city.capitalize()}:\nTemperature: {temperature}°C\nDescription: {description.capitalize()}")
-        print(f'🌦 Weather for {city}: {temperature}°C, {description}')
-    else:
-        await ctx.send("City not found!")
-        print(f'⚠️ City "{city}" not found.')
+    for keywords, response in responses.items():
+        if any(word in content for word in keywords):
+            if isinstance(response, list):
+                chosen = random.choice(response)
+                await message.channel.send(chosen)
+                logging.info(f"Sent quote: '{chosen}' in {message.channel}")
+            else:
+                await message.channel.send(response)
+                logging.info(f"Sent greeting in {message.channel}")
+            break
 
-@client.command()
-async def set_status(ctx, *, status: str):
-    await client.change_presence(activity=discord.Game(name=status))
-    await ctx.send(f"Bot status updated to: {status}")
-    print(f'✅ Bot status updated to: {status}')
+    await bot.process_commands(message)
 
-@client.command()
+# ========================
+# SERVER COMMANDS
+# ========================
+@bot.command(aliases=["info"])
 async def server_info(ctx):
     """Displays detailed server information in a well-formatted way."""
     guild = ctx.guild
@@ -191,37 +97,281 @@ async def server_info(ctx):
     await ctx.send(embed=embed)
 
     print(f'ℹ️ Server info command used by {ctx.author} in {ctx.guild.name}#{ctx.channel.name}')
-    print(f'ℹ️ Server Name: {guild.name} | Owner: {owner} | Members: {member_count} | Channels: {num_channels}')
+    print(f'ℹ️ Server Name: {guild.name} | Owner: {owner} | Members: {member_count} | Channels: {num_channels}.')
 
+# ========================
+# COMMANDS
+# ========================
 
-@client.command()
-async def kick_(ctx, user: discord.User, *, reason: str = "No reason provided"):
-    await ctx.guild.kick(user, reason=reason)
-    await ctx.send(f"{user} has been kicked for {reason}.")
-    print(f'⚡ Kicked {user} from the server for {reason}.')
+@bot.command(aliases=["channel"])
+@commands.has_permissions(manage_channels=True)
+async def create_channel_in_category(ctx, category_name: str, channel_name: str):
+    """Create a text channel within a category"""
+    guild = ctx.guild
+    
+    try:
+        category = discord.utils.get(guild.categories, name=category_name)
+        if not category:
+            category = await guild.create_category(category_name)
+            logging.info(f"📂 Created category '{category_name}' in {guild.name} by {ctx.author}")
 
-@client.command()
-async def help_(ctx):
-    """Displays all available commands and their usage."""
-    help_text = """
-    **🤖 Bot Commands Guide**  
-    Use these commands to interact with the bot:  
+        existing_channel = discord.utils.get(guild.text_channels, name=channel_name, category=category)
+        if existing_channel:
+            await ctx.send(f"⚠️ Channel `{channel_name}` already exists!")
+            logging.warning(f"🚫 Channel creation failed - '{channel_name}' already exists in '{category_name}' ({guild.name})")
+            return
 
-    🔹 **General Commands:**  
-    `!help_` → Show this help message.  
-    `!server_info` → Display server name, creation date, and member count.  
+        await guild.create_text_channel(channel_name, category=category)
+        embed = discord.Embed(
+            description=f"✅ Created `{channel_name}` in `{category_name}`",
+            color=discord.Color.green()
+        )
+        await ctx.send(embed=embed)
+        logging.info(f"📝 Created channel '{channel_name}' in category '{category_name}' ({guild.name}) by {ctx.author}")
+        
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permissions to manage channels!")
+        logging.error(f"🚫 Permission denied for channel creation in {guild.name}")
 
-    🔹 **Messaging Commands:**  
-    `!delete_messages [amount]` → Delete a specific number of messages (default: 5).  
-    `!delete_messages -` → Delete **all messages** in the current channel (use with caution!).  
+@bot.command(aliases=["categories"])
+@commands.has_permissions(administrator=True)
+async def create_categories(ctx, *categories: str):
+    """Create multiple categories with standard channels"""
+    text_channels = ["cours", "tds", "tps", "exams", "bonus"]
+    guild = ctx.guild
+    
+    logging.info(f"🏗️ Starting category creation in {guild.name} by {ctx.author}")
+    
+    for category_name in categories:
+        category = discord.utils.get(guild.categories, name=category_name)
+        if not category:
+            category = await guild.create_category(category_name)
+            logging.info(f"📁 Created category '{category_name}' in {guild.name}")
 
-    🔹 **Weather :**  
-    `!weather <city>` → Get current weather information for a city.
-     
-    🔹 Fun Commands:**
-    `arawkan` → Get a random quote from a predefined list.   
-    """
-    await ctx.send(help_text)
-    print(f'📜 Help command used by {ctx.author} in {ctx.guild.name}#{ctx.channel.name}')
+        created = []
+        for ch_name in text_channels:
+            if not discord.utils.get(guild.text_channels, name=ch_name, category=category):
+                await guild.create_text_channel(ch_name, category=category)
+                created.append(ch_name)
+                logging.info(f"📄 Created channel '{ch_name}' in '{category_name}' ({guild.name})")
 
-client.run(TOKEN)
+        if created:
+            embed = discord.Embed(
+                title=f"Category: {category_name}",
+                description=f"Created channels: {', '.join(created)}",
+                color=discord.Color.blue()
+            )
+            await ctx.send(embed=embed)
+
+    logging.info(f"✅ Finished creating {len(categories)} categories in {guild.name}")
+
+@bot.command(aliases=["w"])
+@commands.cooldown(1, 15, commands.BucketType.user)
+async def weather(ctx, *, city: str):
+    """Get weather data for a city"""
+    if not OPENWEATHER_API_KEY:
+        await ctx.send("❌ Weather service unavailable")
+        return
+
+    try:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
+        res = requests.get(url, timeout=10)
+        data = res.json()
+
+        if data['cod'] != 200:
+            await ctx.send(f"❌ Error: {data.get('message', 'Unknown error')}")
+            return
+
+        main = data['main']
+        weather = data['weather'][0]
+        
+        embed = discord.Embed(
+            title=f"Weather in {data['name']}",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="🌡 Temperature", value=f"{main['temp']}°C")
+        embed.add_field(name="💨 Humidity", value=f"{main['humidity']}%")
+        embed.add_field(name="☁️ Condition", value=weather['description'].title(), inline=False)
+        embed.set_thumbnail(url=f"http://openweathermap.org/img/wn/{weather['icon']}.png")
+        
+        await ctx.send(embed=embed)
+        
+    except requests.exceptions.Timeout:
+        await ctx.send("⌛ Request timed out. Try again later.")
+    except Exception as e:
+        logging.error(f"Weather Error: {str(e)}")
+        await ctx.send("❌ Failed to fetch weather data")
+
+@bot.command(aliases=["status"])
+@commands.has_permissions(administrator=True)
+async def set_status(ctx, *, text: str):
+    """Change the bot's playing status"""
+    await bot.change_presence(activity=discord.Game(name=text))
+    embed = discord.Embed(
+        description=f"🎮 Status set to: **{text}**",
+        color=discord.Color.green()
+    )
+    await ctx.send(embed=embed)
+
+# ========================
+# MESSAGE MANAGEMENT
+# ========================
+
+@bot.command(aliases=["clear"])
+@commands.has_permissions(manage_messages=True)
+async def delete_messages(ctx, amount: str = "5"):
+    """Delete messages (specify number or '-' to delete all)"""
+    try:
+        if amount == "-":
+            deleted = await ctx.channel.purge(limit=None, check=lambda m: not m.pinned)
+            msg = f"🗑️ Deleted **{len(deleted)}** messages"
+        else:
+            amount = int(amount)
+            if amount < 1:
+                raise ValueError
+            deleted = await ctx.channel.purge(limit=amount + 1)
+            msg = f"🗑️ Deleted **{len(deleted)-1}** messages"
+            
+        embed = discord.Embed(description=msg, color=discord.Color.green())
+        await ctx.send(embed=embed, delete_after=5)
+        logging.info(f"Deleted messages in {ctx.channel} by {ctx.author}")
+
+    except ValueError:
+        embed = discord.Embed(
+            description="⚠️ Invalid amount. Use number or '-'",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+
+@bot.command(aliases=["clearB"])
+async def delete_bot_messages(ctx, limit: int = 5):
+    """Delete the bot's recent messages"""
+    def is_bot(m):
+        return m.author == bot.user
+    
+    deleted = await ctx.channel.purge(limit=limit, check=is_bot)
+    embed = discord.Embed(
+        description=f"🤖 Deleted **{len(deleted)}** bot messages",
+        color=discord.Color.green()
+    )
+    await ctx.send(embed=embed, delete_after=5)
+    logging.info(f"Deleted bot messages in {ctx.channel} by {ctx.author}")
+
+# ========================
+# HELP COMMAND
+# ========================
+
+@bot.command(aliases=["h"])
+async def help_(ctx, command: str = None):
+    """Show detailed help information"""
+    embed = discord.Embed(
+        title="🤖 Cheb BEKKALI Bot Help Center",
+        description="**Prefix:** `!`\nGet detailed help with `!help_ <command>`",
+        color=discord.Color.blue()
+    )
+    
+    if not command:
+        # Main help menu
+        embed.add_field(
+            name="📋 General Commands",
+            value="```"
+                  "help_        -> Show this message\n"
+                  "server_info  -> Server statistics\n"
+                  "weather      -> Check city weather\n"
+                  "```",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🛠️ Moderation Commands",
+            value="```"
+                  "create_channel_in_category <category> <name> -> Create channel\n"
+                  "create_categories <names...>                 -> Bulk create categories\n"
+                  "set_status                                   -> Change bot status\n"
+                  "delete_messages                              -> Clear messages\n"
+                  "delete_bot_messages                          -> Remove bot messages\n"
+                  "create_channel                               -> Create channels\n"
+                  "```",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🎉 Fun Features",
+            value="```"
+                  "Auto-responses to:\n"
+                  "- hello/hi/salam\n"
+                  "- 'arawkan' keyword\n"
+                  "```",
+            inline=False
+        )
+        
+        embed.set_footer(text="🔹 Required permissions: [🛠️] Manage Messages/Channels")
+        
+    else:
+        cmd = bot.get_command(command.lower())
+        if not cmd:
+            embed = discord.Embed(
+                description=f"❌ Command `{command}` not found",
+                color=discord.Color.red()
+            )
+            return await ctx.send(embed=embed)
+        
+        embed.title = f"ℹ️ Help for: {cmd.name}"
+        embed.description = f"**Description:** {cmd.help or 'No description'}"
+        
+        if cmd.aliases:
+            embed.add_field(name="Aliases", value=", ".join(cmd.aliases), inline=False)
+            
+        if isinstance(cmd, commands.Command):
+            params = " ".join(f"<{param}>" for param in cmd.clean_params)
+            embed.add_field(
+                name="Usage", 
+                value=f"```!{cmd.name} {params}```",
+                inline=False
+            )
+            
+        if cmd.checks:
+            perms = []
+            for check in cmd.checks:
+                if hasattr(check, '__qualname__') and 'has_permissions' in check.__qualname__:
+                    perms.extend(check.kwargs.get('manage_messages', []))
+            if perms:
+                embed.add_field(
+                    name="Required Permissions",
+                    value="\n".join(f"• {perm.replace('_', ' ').title()}" for perm in perms),
+                    inline=False
+                )
+
+    await ctx.send(embed=embed)
+
+# ========================
+# ERROR HANDLERS
+# ========================
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        embed = discord.Embed(
+            description="❌ Command not found. Use `!help_` for available commands",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send(f"❌ {ctx.author.mention} doesn't have permission to use this command.")
+    else:
+        logging.error(f"Command Error: {str(error)}")
+
+@weather.error
+async def weather_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("ℹ️ Usage: `!weather <city>`")
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ Cooldown active. Try again in {error.retry_after:.1f}s")
+
+# ========================
+# RUN BOT
+# ========================
+if __name__ == "__main__":
+    if not TOKEN:
+        logging.critical("❌ No bot token found in environment!")
+    else:
+        bot.run(TOKEN)
