@@ -102,7 +102,6 @@ async def server_info(ctx):
 # ========================
 # COMMANDS
 # ========================
-
 @bot.command(aliases=["channel"])
 @commands.has_permissions(manage_channels=True)
 async def create_channel_in_category(ctx, category_name: str, channel_name: str):
@@ -165,6 +164,96 @@ async def create_categories(ctx, *categories: str):
 
     logging.info(f"✅ Finished creating {len(categories)} categories in {guild.name}")
 
+@bot.command(aliases=["rmcc"])
+@commands.has_permissions(manage_channels=True)
+async def delete_cat_chan(ctx, *, args: str):
+    """Delete categories/channels with confirmation for categories"""
+
+    category_name = None
+    channel_name = None
+    parts = args.split()
+    
+    for i, part in enumerate(parts):
+        if part == "--cat" and i+1 < len(parts):
+            category_name = " ".join(parts[i+1:]).split("--")[0].strip()
+        if part == "--cha" and i+1 < len(parts):
+            channel_name = " ".join(parts[i+1:]).split("--")[0].strip()
+
+    guild = ctx.guild
+    deleted = []
+    confirmation_msg = None
+
+    try:
+        if channel_name:
+            channel = discord.utils.get(guild.text_channels, name=channel_name)
+            if channel:
+                await channel.delete()
+                deleted.append(f"Channel '#{channel_name}'")
+                logging.info(f"🗑️ Deleted channel '{channel_name}' in {guild.name} by {ctx.author}")
+            else:
+                await ctx.send(f"⚠️ Channel `{channel_name}` not found!", delete_after=5)
+
+        if category_name:
+            category = discord.utils.get(guild.categories, name=category_name)
+            if category:
+                channels = category.channels
+                
+                confirm_embed = discord.Embed(
+                    title="⚠️ Confirm Category Deletion",
+                    description=f"Delete **{category_name}** and its **{len(channels)}** channels?",
+                    color=discord.Color.orange()
+                )
+                confirm_embed.set_footer(text="React with ✅ to confirm or ❌ to cancel")
+                
+                confirmation_msg = await ctx.send(embed=confirm_embed)
+                await confirmation_msg.add_reaction('✅')
+                await confirmation_msg.add_reaction('❌')
+
+                def check(reaction, user):
+                    return (
+                        user == ctx.author and
+                        str(reaction.emoji) in ['✅', '❌'] and
+                        reaction.message.id == confirmation_msg.id
+                    )
+
+                try:
+                    reaction, _ = await bot.wait_for('reaction_add', timeout=30.0, check=check)
+                    
+                    if str(reaction.emoji) == '✅':
+                        for channel in channels:
+                            await channel.delete()
+                            logging.info(f"🗑️ Deleted channel '{channel.name}' in category '{category_name}'")
+                        
+                        await category.delete()
+                        deleted.append(f"Category '{category_name}' (with {len(channels)} channels)")
+                        logging.info(f"🗑️ Deleted category '{category_name}' in {guild.name} by {ctx.author}")
+                    else:
+                        await ctx.send("🚫 Deletion cancelled.", delete_after=5)
+                        return
+                        
+                except asyncio.TimeoutError:
+                    await ctx.send("🕒 Confirmation timed out. Deletion cancelled.", delete_after=5)
+                    return
+            else:
+                await ctx.send(f"⚠️ Category `{category_name}` not found!", delete_after=5)
+
+        if deleted:
+            final_embed = discord.Embed(
+                description=f"✅ Successfully deleted:\n{'\n'.join(deleted)}",
+                color=discord.Color.green()
+            )
+            await ctx.send(embed=final_embed)
+        else:
+            await ctx.send("⚠️ No valid deletions performed", delete_after=5)
+
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to manage channels!", delete_after=5)
+    except discord.HTTPException as e:
+        await ctx.send(f"❌ Error: {str(e)}", delete_after=5)
+    finally:
+        if confirmation_msg:
+            await confirmation_msg.delete()
+
 @bot.command(aliases=["w"])
 @commands.cooldown(1, 15, commands.BucketType.user)
 async def weather(ctx, *, city: str):
@@ -216,25 +305,56 @@ async def set_status(ctx, *, text: str):
 # ========================
 # MESSAGE MANAGEMENT
 # ========================
-
 @bot.command(aliases=["clear"])
 @commands.has_permissions(manage_messages=True)
 async def delete_messages(ctx, amount: str = "5"):
     """Delete messages (specify number or '-' to delete all)"""
     try:
-        if amount == "-":
-            deleted = await ctx.channel.purge(limit=None, check=lambda m: not m.pinned)
-            msg = f"🗑️ Deleted **{len(deleted)}** messages"
-        else:
-            amount = int(amount)
-            if amount < 1:
-                raise ValueError
-            deleted = await ctx.channel.purge(limit=amount + 1)
-            msg = f"🗑️ Deleted **{len(deleted)-1}** messages"
+        # Confirmation embed
+        action = "all unpinned messages" if amount == "-" else f"{amount} messages"
+        confirm_embed = discord.Embed(
+            title="⚠️ Confirm Message Deletion",
+            description=f"You are about to delete {action}. Continue?",
+            color=discord.Color.orange()
+        )
+        confirm_embed.set_footer(text="React with ✅ to confirm or ❌ to cancel")
+        confirmation_msg = await ctx.send(embed=confirm_embed)
+        await confirmation_msg.add_reaction('✅')
+        await confirmation_msg.add_reaction('❌')
+
+        # Reaction check
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) in ['✅', '❌'] and reaction.message.id == confirmation_msg.id
+
+        try:
+            reaction, _ = await bot.wait_for('reaction_add', timeout=30.0, check=check)
             
-        embed = discord.Embed(description=msg, color=discord.Color.green())
-        await ctx.send(embed=embed, delete_after=5)
-        logging.info(f"Deleted messages in {ctx.channel} by {ctx.author}")
+            if str(reaction.emoji) == '✅':
+                await confirmation_msg.delete()
+                
+                if amount == "-":
+                    deleted = await ctx.channel.purge(limit=None, check=lambda m: not m.pinned)
+                    msg = f"🗑️ Deleted **{len(deleted)}** messages"
+                else:
+                    amount = int(amount)
+                    if amount < 1:
+                        raise ValueError
+                    deleted = await ctx.channel.purge(limit=amount + 1)
+                    msg = f"🗑️ Deleted **{len(deleted)-1}** messages"
+                
+                embed = discord.Embed(description=msg, color=discord.Color.green())
+                await ctx.send(embed=embed, delete_after=5)
+                logging.info(f"Deleted messages in {ctx.channel} by {ctx.author}")
+            else:
+                await ctx.send("🚫 Deletion cancelled.", delete_after=5)
+
+        except asyncio.TimeoutError:
+            await ctx.send("🕒 Confirmation timed out. Deletion cancelled.", delete_after=5)
+        finally:
+            try:
+                await confirmation_msg.delete()
+            except discord.NotFound:
+                pass
 
     except ValueError:
         embed = discord.Embed(
@@ -244,23 +364,54 @@ async def delete_messages(ctx, amount: str = "5"):
         await ctx.send(embed=embed, delete_after=5)
 
 @bot.command(aliases=["clearB"])
+@commands.has_permissions(manage_messages=True)
 async def delete_bot_messages(ctx, limit: int = 5):
     """Delete the bot's recent messages"""
-    def is_bot(m):
-        return m.author == bot.user
-    
-    deleted = await ctx.channel.purge(limit=limit, check=is_bot)
-    embed = discord.Embed(
-        description=f"🤖 Deleted **{len(deleted)}** bot messages",
-        color=discord.Color.green()
+    # Confirmation embed
+    confirm_embed = discord.Embed(
+        title="⚠️ Confirm Bot Message Deletion",
+        description=f"You are about to delete {limit} bot messages. Continue?",
+        color=discord.Color.orange()
     )
-    await ctx.send(embed=embed, delete_after=5)
-    logging.info(f"Deleted bot messages in {ctx.channel} by {ctx.author}")
+    confirm_embed.set_footer(text="React with ✅ to confirm or ❌ to cancel")
+    confirmation_msg = await ctx.send(embed=confirm_embed)
+    await confirmation_msg.add_reaction('✅')
+    await confirmation_msg.add_reaction('❌')
+
+    # Reaction check
+    def check(reaction, user):
+        return user == ctx.author and str(reaction.emoji) in ['✅', '❌'] and reaction.message.id == confirmation_msg.id
+
+    try:
+        reaction, _ = await bot.wait_for('reaction_add', timeout=30.0, check=check)
+        
+        if str(reaction.emoji) == '✅':
+            await confirmation_msg.delete()
+            
+            def is_bot(m):
+                return m.author == bot.user
+            
+            deleted = await ctx.channel.purge(limit=limit, check=is_bot)
+            embed = discord.Embed(
+                description=f"🤖 Deleted **{len(deleted)}** bot messages",
+                color=discord.Color.green()
+            )
+            await ctx.send(embed=embed, delete_after=5)
+            logging.info(f"Deleted bot messages in {ctx.channel} by {ctx.author}")
+        else:
+            await ctx.send("🚫 Deletion cancelled.", delete_after=5)
+
+    except asyncio.TimeoutError:
+        await ctx.send("🕒 Confirmation timed out. Deletion cancelled.", delete_after=5)
+    finally:
+        try:
+            await confirmation_msg.delete()
+        except discord.NotFound:
+            pass
 
 # ========================
 # HELP COMMAND
 # ========================
-
 @bot.command(aliases=["h"])
 async def help_(ctx, command: str = None):
     """Show detailed help information"""
@@ -275,9 +426,10 @@ async def help_(ctx, command: str = None):
         embed.add_field(
             name="📋 General Commands",
             value="```"
-                  "help_        -> Show this message\n"
-                  "server_info  -> Server statistics\n"
-                  "weather      -> Check city weather\n"
+                  "!h        -> Show this message\n"
+                  "!info     -> Server statistics\n"
+                  "!weather  -> Check city weather\n"
+                  "!clearB   -> Remove bot messages\n"
                   "```",
             inline=False
         )
@@ -285,12 +437,11 @@ async def help_(ctx, command: str = None):
         embed.add_field(
             name="🛠️ Moderation Commands",
             value="```"
-                  "create_channel_in_category <category> <name> -> Create channel\n"
-                  "create_categories <names...>                 -> Bulk create categories\n"
-                  "set_status                                   -> Change bot status\n"
-                  "delete_messages                              -> Clear messages\n"
-                  "delete_bot_messages                          -> Remove bot messages\n"
-                  "create_channel                               -> Create channels\n"
+                  "!channel <category> <name> -> Create channel\n"
+                  "!categories <names...>     -> Create categories\n"
+                  "!rmcc [--cat] [--cha]      -> Delete categories/channels\n"
+                  "!status                    -> Change bot status\n"
+                  "!clear                     -> Clear messages\n"
                   "```",
             inline=False
         )
