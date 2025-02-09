@@ -132,35 +132,159 @@ async def create_channel_in_category(ctx, category_name: str, channel_name: str)
         await ctx.send("❌ I don't have permissions to manage channels!")
         logging.error(f"🚫 Permission denied for channel creation in {guild.name}")
 
+# ========================
+# CUSTOM VIEWS
+# ========================
+class PrivacyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=30.0)
+        self.is_private = None
+
+    @discord.ui.button(label="Private", style=discord.ButtonStyle.red, emoji="🔒")
+    async def private_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.is_private = True
+        await interaction.response.defer()
+        self.stop()
+
+    @discord.ui.button(label="Public", style=discord.ButtonStyle.green, emoji="🌍")
+    async def public_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.is_private = False
+        await interaction.response.defer()
+        self.stop()
+
+class RoleSelectView(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=30.0)
+        self.ctx = ctx
+        self.selected_roles = []
+        
+        # Get eligible roles (excluding @everyone and roles above bot)
+        roles = [role for role in ctx.guild.roles 
+                if role.name != "@everyone" 
+                and role < ctx.guild.me.top_role]
+
+        # Only add dropdown if there are roles available
+        if roles:
+            self.select = discord.ui.Select(
+                placeholder="Select roles...",
+                min_values=1,
+                max_values=min(25, len(roles)),
+                options=[discord.SelectOption(label=role.name, value=str(role.id)) for role in roles]
+            )
+            self.select.callback = self.select_callback
+            self.add_item(self.select)
+        else:
+            self.selected_roles = None  # Special value to indicate no roles available
+
+    async def select_callback(self, interaction: discord.Interaction):
+        if interaction.user != self.ctx.author:
+            return
+            
+        self.selected_roles = [interaction.guild.get_role(int(id)) for id in self.select.values]
+        await interaction.response.defer()
+        self.stop()
+
+# ========================
+# UPDATED CREATE CATEGORIES COMMAND
+# ========================
 @bot.command(aliases=["categories"])
 @commands.has_permissions(administrator=True)
 async def create_categories(ctx, *categories: str):
-    """Create multiple categories with standard channels"""
+    """Create categories with optional privacy settings and role selection"""
     text_channels = ["cours", "tds", "tps", "exams", "bonus"]
     guild = ctx.guild
     
     logging.info(f"🏗️ Starting category creation in {guild.name} by {ctx.author}")
     
     for category_name in categories:
-        category = discord.utils.get(guild.categories, name=category_name)
-        if not category:
-            category = await guild.create_category(category_name)
-            logging.info(f"📁 Created category '{category_name}' in {guild.name}")
+        if discord.utils.get(guild.categories, name=category_name):
+            await ctx.send(f"⚠️ Category `{category_name}` already exists!", delete_after=5)
+            continue
 
-        created = []
-        for ch_name in text_channels:
-            if not discord.utils.get(guild.text_channels, name=ch_name, category=category):
-                await guild.create_text_channel(ch_name, category=category)
-                created.append(ch_name)
-                logging.info(f"📄 Created channel '{ch_name}' in '{category_name}' ({guild.name})")
-
-        if created:
+        try:
+            # Step 1: Privacy selection
+            privacy_view = PrivacyView()
             embed = discord.Embed(
-                title=f"Category: {category_name}",
-                description=f"Created channels: {', '.join(created)}",
+                title=f"Category Privacy: {category_name}",
+                description="Should this category be private?",
                 color=discord.Color.blue()
             )
+            privacy_msg = await ctx.send(embed=embed, view=privacy_view)
+            
+            await privacy_view.wait()
+            if privacy_view.is_private is None:
+                await ctx.send("⏰ Timed out. Skipping category creation.", delete_after=5)
+                continue
+                
+            overwrites = {}
+            roles = []
+            
+            # Step 2: Handle private category setup
+            if privacy_view.is_private:
+                role_view = RoleSelectView(ctx)
+                
+                if role_view.selected_roles is None:  # No roles available
+                    await ctx.send("⚠️ No eligible roles found. Creating public category instead.", delete_after=5)
+                    privacy_view.is_private = False
+                else:
+                    embed = discord.Embed(
+                        description="Select roles that should access this category:",
+                        color=discord.Color.blue()
+                    )
+                    role_msg = await ctx.send(embed=embed, view=role_view)
+                    await role_view.wait()
+                    
+                    if role_view.selected_roles:
+                        roles = role_view.selected_roles
+                        overwrites = {
+                            guild.default_role: discord.PermissionOverwrite(view_channel=False)
+                        }
+                        for role in roles:
+                            overwrites[role] = discord.PermissionOverwrite(view_channel=True)
+                    else:
+                        await ctx.send("⚠️ No roles selected. Creating public category instead.", delete_after=5)
+                        privacy_view.is_private = False
+
+            # Always initialize overwrites as a dict
+            final_overwrites = overwrites if privacy_view.is_private else {}
+
+            # Create category with permissions (FIXED LINE)
+            category = await guild.create_category(
+                name=category_name,
+                overwrites=final_overwrites
+            )
+            logging.info(f"📁 Created category '{category_name}' in {guild.name}")
+
+            # Rest of the code remains the same...
+
+            # Create channels
+            created = []
+            for ch_name in text_channels:
+                await guild.create_text_channel(ch_name, category=category)
+                created.append(ch_name)
+                logging.info(f"📄 Created channel '{ch_name}' in '{category_name}'")
+
+            # Final response
+            embed = discord.Embed(
+                title=f"Created: {category_name}",
+                description=f"**Channels:** {', '.join(created)}",
+                color=discord.Color.green()
+            )
+            if roles:
+                embed.add_field(name="🔒 Accessible by", value="\n".join(role.mention for role in roles))
             await ctx.send(embed=embed)
+
+        except discord.HTTPException as e:
+            logging.error(f"Category creation failed: {str(e)}")
+            await ctx.send(f"❌ Error creating category: {str(e)}", delete_after=5)
+        finally:
+            # Cleanup messages
+            try:
+                await privacy_msg.delete()
+                if 'role_msg' in locals():
+                    await role_msg.delete()
+            except discord.NotFound:
+                pass
 
     logging.info(f"✅ Finished creating {len(categories)} categories in {guild.name}")
 
