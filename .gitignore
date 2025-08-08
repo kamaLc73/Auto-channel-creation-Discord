@@ -1,9 +1,9 @@
-.env
-
 __pycache__
 
-*.ipynb
+.env
 
-*.csv
+static/
 
-.with_selenium.py
+v1/
+
+Deployment/
